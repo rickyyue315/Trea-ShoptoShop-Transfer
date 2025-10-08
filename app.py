@@ -144,17 +144,13 @@ def calculate_conservative_transfers(df):
                     
                     recommendations.append({
                         'Article': article,
-                        'Product Desc': transferer['Article Description'],
-                        'OM': om,
-                        'Transfer Site': transferer['Site'],
+                        'Article Description': transferer['Article Description'],
+                        'From OM': om,
+                        'From Site': transferer['Site'],
+                        'To Site': receiver['Site'],
                         'Transfer Qty': transfer_qty,
-                        'Transfer Site Original Stock': transferer['SaSa Net Stock'],
-                        'Transfer Site After Transfer Stock': transferer['SaSa Net Stock'] - transfer_qty,
-                        'Transfer Site Safety Stock': transferer['Safety Stock'],
-                        'Transfer Site MOQ': transferer['MOQ'],
-                        'Receive Site': receiver['Site'],
-                        'Receive Site Target Qty': receiver['Target'],
-                        'Notes': f"{transferer['Transfer Type']} -> {receiver['Receive Type']}"
+                        'Transfer Type': transferer['Transfer Type'],
+                        'Receive Type': receiver['Receive Type']
                     })
                     
                     needed -= transfer_qty
@@ -225,17 +221,13 @@ def calculate_aggressive_transfers(df):
                     
                     recommendations.append({
                         'Article': article,
-                        'Product Desc': transferer['Article Description'],
-                        'OM': om,
-                        'Transfer Site': transferer['Site'],
+                        'Article Description': transferer['Article Description'],
+                        'From OM': om,
+                        'From Site': transferer['Site'],
+                        'To Site': receiver['Site'],
                         'Transfer Qty': transfer_qty,
-                        'Transfer Site Original Stock': transferer['SaSa Net Stock'],
-                        'Transfer Site After Transfer Stock': transferer['SaSa Net Stock'] - transfer_qty,
-                        'Transfer Site Safety Stock': transferer['Safety Stock'],
-                        'Transfer Site MOQ': transferer['MOQ'],
-                        'Receive Site': receiver['Site'],
-                        'Receive Site Target Qty': receiver['Target'],
-                        'Notes': f"{transferer['Transfer Type']} -> {receiver['Receive Type']}"
+                        'Transfer Type': transferer['Transfer Type'],
+                        'Receive Type': receiver['Receive Type']
                     })
                     
                     needed -= transfer_qty
@@ -247,210 +239,274 @@ def calculate_aggressive_transfers(df):
     return pd.DataFrame(recommendations)
 
 
-def display_statistics(recs_df, initial_df):
+def calculate_super_aggressive_transfers(df):
+    """Calculates super aggressive transfer recommendations based on defined business rules."""
+    df['Effective Sales'] = np.where(df['Last Month Sold Qty'] > 0, df['Last Month Sold Qty'], df['MTD Sold Qty'])
+    df['Stock+Pending'] = df['SaSa Net Stock'] + df['Pending Received']
+
+    # Get max sales per article
+    max_sales = df.groupby('Article')['Effective Sales'].max().to_dict()
+    df['Max Sales'] = df['Article'].map(max_sales)
+
+    # --- Identify Transfer-Out Candidates ---
+    transfer_out_list = []
+
+    # Priority 1: ND Full Transfer
+    nd_transfers = df[(df['RP Type'] == 'ND') & (df['SaSa Net Stock'] > 0)].copy()
+    nd_transfers['Transfer Out Qty'] = nd_transfers['SaSa Net Stock']
+    nd_transfers['Transfer Out Type'] = 'ND轉出'
+    nd_transfers['Priority'] = 1
+    transfer_out_list.append(nd_transfers)
+
+    # Priority 2: RF Super Aggressive Transfer
+    rf_super_aggressive = df[
+        (df['RP Type'] == 'RF') &
+        (df['Stock+Pending'] > 0) &
+        (df['Effective Sales'] < df['Max Sales'])
+    ].copy()
+
+    if not rf_super_aggressive.empty:
+        rf_super_aggressive = rf_super_aggressive.sort_values(by=['Article', 'Effective Sales'], ascending=[True, True])
+        
+        # Calculations
+        base_transferable = rf_super_aggressive['SaSa Net Stock'] - 2
+        upper_limit = rf_super_aggressive['Stock+Pending'] * 0.9
+        
+        rf_super_aggressive['Transfer Out Qty'] = np.minimum(base_transferable, upper_limit).astype(int)
+        rf_super_aggressive['Transfer Out Qty'] = np.minimum(rf_super_aggressive['Transfer Out Qty'], rf_super_aggressive['SaSa Net Stock'])
+        rf_super_aggressive['Transfer Out Qty'] = rf_super_aggressive['Transfer Out Qty'].clip(lower=0)
+
+        rf_super_aggressive = rf_super_aggressive[rf_super_aggressive['Transfer Out Qty'] > 0]
+        rf_super_aggressive['Transfer Out Type'] = 'RF特強轉出'
+        rf_super_aggressive['Priority'] = 2
+        transfer_out_list.append(rf_super_aggressive)
+
+    if not transfer_out_list:
+        return pd.DataFrame()
+
+    transfer_out = pd.concat(transfer_out_list).sort_values(by=['Article', 'Priority'])
+
+    # --- Identify Receive Candidates ---
+    receive_in = df[df['Target'] > 0].copy()
+    receive_in['Receive In Qty'] = receive_in['Target']
+    receive_in['Receive In Type'] = '指定店鋪補貨'
+    receive_in = receive_in.sort_values(by=['Article', 'Target'], ascending=[True, False])
+
+    # --- Matching Logic ---
+    recommendations = []
+    transfer_out_grouped = transfer_out.groupby(['Article', 'OM'])
+    receive_in_grouped = receive_in.groupby(['Article', 'OM'])
+
+    for (article, om), out_group in transfer_out_grouped:
+        if (article, om) in receive_in_grouped.groups:
+            in_group = receive_in_grouped.get_group((article, om))
+            
+            for _, out_row in out_group.iterrows():
+                for _, in_row in in_group.iterrows():
+                    if out_row['Site'] != in_row['Site'] and out_row['Transfer Out Qty'] > 0 and in_row['Receive In Qty'] > 0:
+                        transfer_qty = min(out_row['Transfer Out Qty'], in_row['Receive In Qty'])
+                        
+                        recommendations.append({
+                            'From Site': out_row['Site'],
+                            'To Site': in_row['Site'],
+                            'Article': article,
+                            'Article Description': out_row['Article Description'],
+                            'From OM': om,
+                            'Transfer Qty': transfer_qty,
+                            'Transfer Type': out_row['Transfer Out Type'],
+                            'Receive Type': in_row['Receive In Type']
+                        })
+                        
+                        # Update quantities
+                        out_row['Transfer Out Qty'] -= transfer_qty
+                        in_row['Receive In Qty'] -= transfer_qty
+
+    if not recommendations:
+        return pd.DataFrame()
+        
+    return pd.DataFrame(recommendations)
+
+def display_statistics(recs, original_df):
     st.header("5. 統計分析")
 
-    if recs_df.empty:
-        st.info("沒有建議可供分析。")
+    if recs.empty:
+        st.info("沒有調貨建議可供分析。")
         return
 
-    # 1. Basic KPIs
-    total_recs = len(recs_df)
-    total_qty = recs_df['Transfer Qty'].sum()
-    involved_articles = recs_df['Article'].nunique()
-    involved_oms = recs_df['OM'].nunique()
+    # 1. KPIs
+    total_recs = len(recs)
+    total_qty = recs['Transfer Qty'].sum()
+    unique_articles = recs['Article'].nunique()
+    unique_oms = recs['From OM'].nunique()
 
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("總調貨建議數量", f"{total_recs:,}")
-    col2.metric("總調貨件數", f"{total_qty:,.0f}")
-    col3.metric("涉及產品數量", f"{involved_articles:,}")
-    col4.metric("涉及OM數量", f"{involved_oms:,}")
+    kpi_data = {
+        "指標": ["總調貨建議數量", "總調貨件數", "涉及SKU數量", "涉及OM數量"],
+        "數值": [total_recs, total_qty, unique_articles, unique_oms]
+    }
+    kpi_df = pd.DataFrame(kpi_data)
 
-    st.markdown("---")
+    st.subheader("📊 KPI 概覽")
+    st.table(kpi_df)
 
-    # 2. Per Article Stats
-    article_stats = recs_df.groupby('Article').agg(
-        Total_Transfer_Qty=('Transfer Qty', 'sum'),
-        Recommendation_Lines=('Article', 'size'),
-        Involved_OMs=('OM', 'nunique')
+    # 2. Per-Article Statistics
+    st.subheader("📦 按SKU統計")
+    article_stats = recs.groupby('Article').agg(
+        Total_Demand=('Transfer Qty', 'sum'),
+        Total_Transferred=('Transfer Qty', 'sum'),
+        Transfer_Lines=('Article', 'count')
     ).reset_index()
-    article_stats = article_stats.sort_values(by="Total_Transfer_Qty", ascending=False)
+    article_stats['Fulfillment_Rate'] = (article_stats['Total_Transferred'] / article_stats['Total_Demand'].replace(0, 1)).apply(lambda x: f"{x:.2%}")
+    st.dataframe(article_stats)
 
-    # 3. Per OM Stats
-    om_stats = recs_df.groupby('OM').agg(
-        Total_Transfer_Qty=('Transfer Qty', 'sum'),
-        Recommendation_Lines=('OM', 'size'),
-        Involved_Articles=('Article', 'nunique')
+    # 3. Per-OM Statistics
+    st.subheader("🏢 按OM統計")
+    om_stats = recs.groupby('From OM').agg(
+        Total_Transferred=('Transfer Qty', 'sum'),
+        Transfer_Lines=('From OM', 'count'),
+        Unique_Articles=('Article', 'nunique')
     ).reset_index()
-    om_stats = om_stats.sort_values(by="Total_Transfer_Qty", ascending=False)
+    st.dataframe(om_stats)
 
-    col1, col2 = st.columns(2)
-    with col1:
-        st.subheader("按產品統計")
-        st.dataframe(article_stats.style.format({"Total_Transfer_Qty": "{:,.0f}"}))
-    with col2:
-        st.subheader("按OM統計")
-        st.dataframe(om_stats.style.format({"Total_Transfer_Qty": "{:,.0f}"}))
-
-    st.markdown("---")
-
-    # 4. Transfer-out Type Distribution
-    transfer_type_stats = recs_df['Notes'].apply(lambda x: x.split(' -> ')[0]).value_counts().reset_index()
-    transfer_type_stats.columns = ['Transfer Type', 'Recommendation_Lines']
+    # 4. Transfer-out type distribution
+    st.subheader("🚚 轉出類型分佈")
     
-    transfer_qty_by_type = recs_df.groupby(recs_df['Notes'].apply(lambda x: x.split(' -> ')[0]))['Transfer Qty'].sum().reset_index()
-    transfer_qty_by_type.columns = ['Transfer Type', 'Total_Transfer_Qty']
-
-    transfer_type_summary = pd.merge(transfer_type_stats, transfer_qty_by_type, on='Transfer Type')
-
-
-    # 5. Receive Type Results
-    target_demand = initial_df[initial_df['Target'] > 0].groupby(['Article', 'OM'])['Target'].sum().reset_index()
-    target_demand.rename(columns={'Target': 'Total_Target_Qty'}, inplace=True)
-
-    actual_received = recs_df.groupby(['Article', 'OM'])['Transfer Qty'].sum().reset_index()
-    actual_received.rename(columns={'Transfer Qty': 'Actual_Received_Qty'}, inplace=True)
-
-    receive_summary = pd.merge(target_demand, actual_received, on=['Article', 'OM'], how='left').fillna(0)
-    receive_summary['Fulfillment_Rate'] = (receive_summary['Actual_Received_Qty'] / receive_summary['Total_Target_Qty']).fillna(0)
-
-    col1, col2 = st.columns(2)
-    with col1:
-        st.subheader("轉出類型分佈")
-        st.dataframe(transfer_type_summary.style.format({"Total_Transfer_Qty": "{:,.0f}"}))
-    with col2:
-        st.subheader("接收類型結果 (指定需求補貨)")
-        st.dataframe(receive_summary.style.format({
-            "Total_Target_Qty": "{:,.0f}",
-            "Actual_Received_Qty": "{:,.0f}",
-            "Fulfillment_Rate": "{:.2%}"
-        }))
+    strategy = st.session_state.get('transfer_strategy', '保守轉貨 (Conservative)')
     
-    st.session_state.stats = {
-        "kpi": {
-            "total_recs": total_recs,
-            "total_qty": total_qty,
-            "involved_articles": involved_articles,
-            "involved_oms": involved_oms,
-        },
+    if strategy == '保守轉貨 (Conservative)':
+        transfer_type_summary = recs.groupby('Transfer Type').agg(
+            Total_Qty=('Transfer Qty', 'sum'),
+            Lines=('Transfer Type', 'count')
+        ).reset_index()
+        st.dataframe(transfer_type_summary)
+    elif strategy == '加強轉貨 (Aggressive)':
+        transfer_type_summary = recs.groupby('Transfer Type').agg(
+            Total_Qty=('Transfer Qty', 'sum'),
+            Lines=('Transfer Type', 'count')
+        ).reset_index()
+        st.dataframe(transfer_type_summary)
+    elif strategy == '特強轉貨 (Super Aggressive)':
+        transfer_type_summary = recs.groupby('Transfer Type').agg(
+            Total_Qty=('Transfer Qty', 'sum'),
+            Lines=('Transfer Type', 'count')
+        ).reset_index()
+        st.dataframe(transfer_type_summary)
+
+
+    # 5. Receive type results
+    st.subheader("🎯 接收類型結果")
+    receive_summary = recs.groupby('To Site').agg(
+        Demand_Qty=('Transfer Qty', 'sum'),
+        Received_Qty=('Transfer Qty', 'sum')
+    ).reset_index()
+    st.dataframe(receive_summary)
+    
+    st.session_state['stats'] = {
+        "kpi": kpi_df,
         "article_stats": article_stats,
         "om_stats": om_stats,
         "transfer_type_summary": transfer_type_summary,
         "receive_summary": receive_summary
     }
 
+def create_visualizations(recs, original_df, strategy):
+    st.header("6. 數據視覺化")
 
-def create_visualizations(recs_df, initial_df, strategy):
-    st.header("視覺化分析")
-
-    if recs_df.empty:
-        st.info("沒有建議可供視覺化。")
+    if recs.empty:
+        st.info("沒有數據可供視覺化。")
         return
 
-    # Prepare data for plotting
-    om_list = sorted(initial_df['OM'].unique())
+    # Group data by OM for plotting
+    om_agg = recs.groupby('From OM').agg(
+        ND_Transfer_Qty=('Transfer Qty', lambda x: x[recs['Transfer Type'] == 'ND轉出'].sum()),
+        RF_Surplus_Qty=('Transfer Qty', lambda x: x[recs['Transfer Type'] == 'RF過剩轉出'].sum()),
+        RF_Aggressive_Qty=('Transfer Qty', lambda x: x[recs['Transfer Type'] == 'RF加強轉出'].sum()),
+        RF_Super_Aggressive_Qty=('Transfer Qty', lambda x: x[recs['Transfer Type'] == 'RF特強轉出'].sum()),
+        Demand_Qty=('Transfer Qty', 'sum'),  # Placeholder for total demand
+        Actual_Receive_Qty=('Transfer Qty', 'sum')
+    ).reset_index()
+
+    fig, ax = plt.subplots(figsize=(12, 8))
     
-    # Calculate ND and RF transfer quantities
-    nd_qty = recs_df[recs_df['Notes'].str.contains('ND')].groupby('OM')['Transfer Qty'].sum()
-    rf_conservative_qty = recs_df[recs_df['Notes'].str.contains('RF過剩轉出')].groupby('OM')['Transfer Qty'].sum()
-    rf_aggressive_qty = recs_df[recs_df['Notes'].str.contains('RF加強轉出')].groupby('OM')['Transfer Qty'].sum()
-    
-    # Calculate demand and actual received quantities
-    demand_qty = initial_df[initial_df['Target'] > 0].groupby('OM')['Target'].sum()
-    actual_received_qty = recs_df.groupby('OM')['Transfer Qty'].sum()
+    oms = om_agg['From OM']
+    x = np.arange(len(oms))
+    width = 0.15
 
-    # Reindex to ensure all OMs are present
-    nd_qty = nd_qty.reindex(om_list, fill_value=0)
-    rf_conservative_qty = rf_conservative_qty.reindex(om_list, fill_value=0)
-    rf_aggressive_qty = rf_aggressive_qty.reindex(om_list, fill_value=0)
-    demand_qty = demand_qty.reindex(om_list, fill_value=0)
-    actual_received_qty = actual_received_qty.reindex(om_list, fill_value=0)
+    if strategy == '保守轉貨 (Conservative)':
+        ax.bar(x - width, om_agg['ND_Transfer_Qty'], width, label='ND Transfer')
+        ax.bar(x, om_agg['RF_Surplus_Qty'], width, label='RF Surplus')
+        ax.bar(x + width, om_agg['Demand_Qty'], width, label='Demand')
+        ax.bar(x + 2*width, om_agg['Actual_Receive_Qty'], width, label='Actual Received')
+    elif strategy == '加強轉貨 (Aggressive)':
+        ax.bar(x - 1.5*width, om_agg['ND_Transfer_Qty'], width, label='ND Transfer')
+        ax.bar(x - 0.5*width, om_agg['RF_Surplus_Qty'], width, label='RF Surplus')
+        ax.bar(x + 0.5*width, om_agg['RF_Aggressive_Qty'], width, label='RF Aggressive')
+        ax.bar(x + 1.5*width, om_agg['Demand_Qty'], width, label='Demand')
+        ax.bar(x + 2.5*width, om_agg['Actual_Receive_Qty'], width, label='Actual Received')
+    elif strategy == '特強轉貨 (Super Aggressive)':
+        ax.bar(x - 1.5*width, om_agg['ND_Transfer_Qty'], width, label='ND Transfer')
+        ax.bar(x - 0.5*width, om_agg['RF_Surplus_Qty'], width, label='RF Surplus')
+        ax.bar(x + 0.5*width, om_agg['RF_Super_Aggressive_Qty'], width, label='RF Super Aggressive')
+        ax.bar(x + 1.5*width, om_agg['Demand_Qty'], width, label='Demand')
+        ax.bar(x + 2.5*width, om_agg['Actual_Receive_Qty'], width, label='Actual Received')
 
-    # Plotting
-    fig, ax = plt.subplots(figsize=(12, 7))
-    bar_width = 0.2
-    index = np.arange(len(om_list))
-
-    if strategy == 'A: 保守轉貨':
-        ax.bar(index - bar_width, nd_qty, bar_width, label='ND Transfer Qty')
-        ax.bar(index, rf_conservative_qty, bar_width, label='RF Excess Transfer Qty')
-        ax.bar(index + bar_width, demand_qty, bar_width, label='Demand Receive Qty')
-        ax.bar(index + 2 * bar_width, actual_received_qty, bar_width, label='Actual Receive Qty')
-        title = 'Transfer Receive Analysis (Conservative)'
-    else: # 'B: 加強轉貨'
-        ax.bar(index - 1.5 * bar_width, nd_qty, bar_width, label='ND Transfer Qty')
-        ax.bar(index - 0.5 * bar_width, rf_aggressive_qty, bar_width, label='RF Aggressive Transfer Qty')
-        ax.bar(index + 0.5 * bar_width, demand_qty, bar_width, label='Demand Receive Qty')
-        ax.bar(index + 1.5 * bar_width, actual_received_qty, bar_width, label='Actual Receive Qty')
-        title = 'Transfer Receive Analysis (Aggressive)'
-
-    ax.set_xlabel('OM')
-    ax.set_ylabel('Quantity')
-    ax.set_title(title)
-    ax.set_xticks(index)
-    ax.set_xticklabels(om_list, rotation=45, ha="right")
+    ax.set_ylabel('Transfer Quantity')
+    ax.set_title('Transfer Receive Analysis')
+    ax.set_xticks(x)
+    ax.set_xticklabels(oms, rotation=45, ha="right")
     ax.legend()
     fig.tight_layout()
-
     st.pyplot(fig)
 
-
-def export_to_excel(recs_df, stats):
+def export_to_excel(recs, stats, original_df):
     st.header("6. 匯出功能")
-    if recs_df.empty:
+    if recs.empty:
         st.info("沒有建議可供匯出。")
         return
 
-    # Sheet 1: Recommendations
-    recs_to_export = recs_df[[
-        'Article', 'Product Desc', 'OM', 'Transfer Site', 'Transfer Qty',
-        'Transfer Site Original Stock', 'Transfer Site After Transfer Stock',
-        'Transfer Site Safety Stock', 'Transfer Site MOQ', 'Receive Site',
-        'Receive Site Target Qty', 'Notes'
-    ]].copy()
+    # Prepare original data for merging
+    from_site_df = original_df[['Site', 'Article', 'SaSa Net Stock', 'Safety Stock', 'MOQ']].rename(columns={
+        'Site': 'From Site',
+        'SaSa Net Stock': 'Transfer Site Original Stock',
+        'Safety Stock': 'Transfer Site Safety Stock',
+        'MOQ': 'Transfer Site MOQ'
+    })
 
-    # Sheet 2: Statistics Summary
-    kpi_df = pd.DataFrame([stats['kpi']])
+    to_site_df = original_df[['Site', 'Article', 'Target']].rename(columns={
+        'Site': 'To Site',
+        'Target': 'Receive Site Target Qty'
+    })
+
+    # Merge with recommendations
+    export_df = recs.merge(from_site_df, on=['From Site', 'Article'], how='left')
+    export_df = export_df.merge(to_site_df, on=['To Site', 'Article'], how='left')
+
+
+    # Create a new DataFrame for export
+    export_df_final = pd.DataFrame()
+
+    # Add columns in the specified order
+    export_df_final['Article'] = export_df['Article']
+    export_df_final['Product Desc'] = export_df['Article'].astype(str) + " " + export_df['Article Description']
+    export_df_final['OM'] = export_df['From OM']
+    export_df_final['Transfer Site'] = export_df['From Site']
+    export_df_final['Transfer Qty'] = export_df['Transfer Qty']
     
+    # Populate with actual data
+    export_df_final['Transfer Site Original Stock'] = export_df['Transfer Site Original Stock']
+    export_df_final['Transfer Site After Transfer Stock'] = export_df['Transfer Site Original Stock'] - export_df['Transfer Qty']
+    export_df_final['Transfer Site Safety Stock'] = export_df['Transfer Site Safety Stock']
+    export_df_final['Transfer Site MOQ'] = export_df['Transfer Site MOQ']
+    export_df_final['Receive Site'] = export_df['To Site']
+    export_df_final['Receive Site Target Qty'] = export_df['Receive Site Target Qty']
+    export_df_final['Notes'] = ''
+
     excel_buffer = BytesIO()
     with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
-        recs_to_export.to_excel(writer, sheet_name='調貨建議', index=False)
-        
-        start_row = 0
-        
-        worksheet = writer.sheets['調貨建議']
-        # This is a new sheet, so we need to get it by name
-        # writer.book.create_sheet('統計摘要')
-        # worksheet_stats = writer.sheets['統計摘要']
-        
-        # KPI
-        kpi_df.to_excel(writer, sheet_name='統計摘要', startrow=start_row, index=False)
-        worksheet_stats = writer.sheets['統計摘要']
-        worksheet_stats.cell(row=start_row + 1, column=1, value="KPI概覽")
-        start_row += len(kpi_df) + 3
+        export_df_final.to_excel(writer, sheet_name='Transfer Suggestions', index=False)
 
-        # Article Stats
-        stats['article_stats'].to_excel(writer, sheet_name='統計摘要', startrow=start_row, index=False)
-        worksheet_stats.cell(row=start_row + 1, column=1, value="按Article統計")
-        start_row += len(stats['article_stats']) + 3
-
-        # OM Stats
-        stats['om_stats'].to_excel(writer, sheet_name='統計摘要', startrow=start_row, index=False)
-        worksheet_stats.cell(row=start_row + 1, column=1, value="按OM統計")
-        start_row += len(stats['om_stats']) + 3
-
-        # Transfer Type Stats
-        stats['transfer_type_summary'].to_excel(writer, sheet_name='統計摘要', startrow=start_row, index=False)
-        worksheet_stats.cell(row=start_row + 1, column=1, value="轉出類型分佈")
-        start_row += len(stats['transfer_type_summary']) + 3
-
-        # Receive Type Stats
-        stats['receive_summary'].to_excel(writer, sheet_name='統計摘要', startrow=start_row, index=False)
-        worksheet_stats.cell(row=start_row + 1, column=1, value="接收類型分佈")
-
-    filename = f"強制轉貨建議_{datetime.now().strftime('%Y%m%d')}.xlsx"
+    filename = f"Transfer_Suggestions_{datetime.now().strftime('%Y%m%d')}.xlsx"
     st.download_button(
-        label="📥 下載Excel報告",
+        label="📥 Download Excel Report",
         data=excel_buffer.getvalue(),
         file_name=filename,
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -507,9 +563,9 @@ def main():
 
                     st.header("3. 分析選項")
                     transfer_strategy = st.radio(
-                        "請選擇轉貨策略：",
-                        ('A: 保守轉貨', 'B: 加強轉貨'),
-                        help="A: 保守轉貨 - 優先保證店鋪安全庫存。 B: 加強轉貨 - 更積極地轉出多餘庫存。"
+                        "請選擇調貨模式：",
+                        ('保守轉貨 (Conservative)', '加強轉貨 (Aggressive)', '特強轉貨 (Super Aggressive)'),
+                        help="保守模式優先處理ND和過剩庫存；加強模式會更積極地從低銷量店鋪調貨；特強模式最為積極。"
                     )
 
                     if st.button("🚀 開始分析"):
@@ -517,26 +573,28 @@ def main():
                         
                         with st.spinner('正在生成調貨建議...'):
                             if 'df' in st.session_state:
-                                if transfer_strategy == 'A: 保守轉貨':
+                                recommendations = None
+                                if transfer_strategy == '保守轉貨 (Conservative)':
                                     recommendations = calculate_conservative_transfers(st.session_state.df)
-                                else:
+                                elif transfer_strategy == '加強轉貨 (Aggressive)':
                                     recommendations = calculate_aggressive_transfers(st.session_state.df)
+                                elif transfer_strategy == '特強轉貨 (Super Aggressive)':
+                                    recommendations = calculate_super_aggressive_transfers(st.session_state.df)
                                 
-                                st.session_state.recommendations = recommendations
-                                
-                                if not recommendations.empty:
-                                    st.header("4. 結果展示")
-                                    st.success(f"成功生成 {len(recommendations)} 條調貨建議！")
-                                    st.dataframe(recommendations)
-                                    
-                                    with st.spinner('正在生成統計數據和圖表...'):
-                                        display_statistics(recommendations, st.session_state.df)
-                                        create_visualizations(recommendations, st.session_state.df, st.session_state.transfer_strategy)
-                                        export_to_excel(recommendations, st.session_state.stats)
+                                if recommendations is not None:
+                                    if not recommendations.empty:
+                                        st.header("4. 結果展示")
+                                        st.success(f"成功生成 {len(recommendations)} 條調貨建議！")
+                                        st.dataframe(recommendations)
+                                        
+                                        with st.spinner('正在生成統計數據和圖表...'):
+                                            display_statistics(recommendations, st.session_state.df)
+                                            create_visualizations(recommendations, st.session_state.df, st.session_state.transfer_strategy)
+                                            export_to_excel(recommendations, st.session_state.get('stats', {}), df)
+                                    else:
+                                        st.info("根據所選策略，未生成任何轉貨建議。")
                                 else:
-                                    st.info("沒有找到可行的調貨建議。")
-                            else:
-                                st.error("請先上傳文件。")
+                                    st.error("請先上傳文件。")
 
         except Exception as e:
             st.error(f"處理文件時發生錯誤: {e}")
