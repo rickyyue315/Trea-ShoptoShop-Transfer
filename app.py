@@ -116,6 +116,9 @@ def calculate_conservative_transfers(df):
     # Matching logic
     recommendations = []
     
+    total_demand_map = receive_candidates.groupby(['Article', 'OM'])['Receive Qty'].sum().to_dict()
+    total_transferred_map = {}
+    
     for article, group in transfer_out_candidates.groupby('Article'):
         om_group = group.groupby('OM')
         for om, out_group in om_group:
@@ -140,21 +143,32 @@ def calculate_conservative_transfers(df):
                     if available <= 0:
                         continue
                         
-                    transfer_qty = min(needed, available)
+                    key = (article, om)
+                    demand_limit = total_demand_map.get(key, 0)
+                    current_transferred = total_transferred_map.get(key, 0)
                     
-                    recommendations.append({
-                        'Article': article,
-                        'Article Description': transferer['Article Description'],
-                        'From OM': om,
-                        'From Site': transferer['Site'],
-                        'To Site': receiver['Site'],
-                        'Transfer Qty': transfer_qty,
-                        'Transfer Type': transferer['Transfer Type'],
-                        'Receive Type': receiver['Receive Type']
-                    })
+                    if current_transferred >= demand_limit:
+                        continue
+
+                    remaining_allowed = demand_limit - current_transferred
+                    transfer_qty = min(needed, available, remaining_allowed)
                     
-                    needed -= transfer_qty
-                    transferer['Transfer Qty'] -= transfer_qty
+                    if transfer_qty > 0:
+                        recommendations.append({
+                            'Article': article,
+                            'Article Description': transferer['Article Description'],
+                            'From OM': om,
+                            'From Site': transferer['Site'],
+                            'To Site': receiver['Site'],
+                            'Transfer Qty': transfer_qty,
+                            'Transfer Type': transferer['Transfer Type'],
+                            'Receive Type': receiver['Receive Type']
+                        })
+                        
+                        total_transferred_map[key] = current_transferred + transfer_qty
+                        
+                        needed -= transfer_qty
+                        transferer['Transfer Qty'] -= transfer_qty
                     
                     if needed == 0:
                         break
@@ -196,6 +210,10 @@ def calculate_aggressive_transfers(df):
 
     # Matching logic (same as conservative)
     recommendations = []
+    
+    total_demand_map = receive_candidates.groupby(['Article', 'OM'])['Receive Qty'].sum().to_dict()
+    total_transferred_map = {}
+
     for article, group in transfer_out_candidates.groupby('Article'):
         om_group = group.groupby('OM')
         for om, out_group in om_group:
@@ -217,21 +235,32 @@ def calculate_aggressive_transfers(df):
                     if available <= 0:
                         continue
                         
-                    transfer_qty = min(needed, available)
+                    key = (article, om)
+                    demand_limit = total_demand_map.get(key, 0)
+                    current_transferred = total_transferred_map.get(key, 0)
                     
-                    recommendations.append({
-                        'Article': article,
-                        'Article Description': transferer['Article Description'],
-                        'From OM': om,
-                        'From Site': transferer['Site'],
-                        'To Site': receiver['Site'],
-                        'Transfer Qty': transfer_qty,
-                        'Transfer Type': transferer['Transfer Type'],
-                        'Receive Type': receiver['Receive Type']
-                    })
+                    if current_transferred >= demand_limit:
+                        continue
+
+                    remaining_allowed = demand_limit - current_transferred
+                    transfer_qty = min(needed, available, remaining_allowed)
                     
-                    needed -= transfer_qty
-                    transferer['Transfer Qty'] -= transfer_qty
+                    if transfer_qty > 0:
+                        recommendations.append({
+                            'Article': article,
+                            'Article Description': transferer['Article Description'],
+                            'From OM': om,
+                            'From Site': transferer['Site'],
+                            'To Site': receiver['Site'],
+                            'Transfer Qty': transfer_qty,
+                            'Transfer Type': transferer['Transfer Type'],
+                            'Receive Type': receiver['Receive Type']
+                        })
+                        
+                        total_transferred_map[key] = current_transferred + transfer_qty
+                        
+                        needed -= transfer_qty
+                        transferer['Transfer Qty'] -= transfer_qty
                     
                     if needed == 0:
                         break
@@ -297,6 +326,9 @@ def calculate_super_aggressive_transfers(df):
     transfer_out_grouped = transfer_out.groupby(['Article', 'OM'])
     receive_in_grouped = receive_in.groupby(['Article', 'OM'])
 
+    total_demand_map = receive_in.groupby(['Article', 'OM'])['Receive In Qty'].sum().to_dict()
+    total_transferred_map = {}
+
     for (article, om), out_group in transfer_out_grouped:
         if (article, om) in receive_in_grouped.groups:
             in_group = receive_in_grouped.get_group((article, om))
@@ -304,22 +336,34 @@ def calculate_super_aggressive_transfers(df):
             for _, out_row in out_group.iterrows():
                 for _, in_row in in_group.iterrows():
                     if out_row['Site'] != in_row['Site'] and out_row['Transfer Out Qty'] > 0 and in_row['Receive In Qty'] > 0:
-                        transfer_qty = min(out_row['Transfer Out Qty'], in_row['Receive In Qty'])
                         
-                        recommendations.append({
-                            'From Site': out_row['Site'],
-                            'To Site': in_row['Site'],
-                            'Article': article,
-                            'Article Description': out_row['Article Description'],
-                            'From OM': om,
-                            'Transfer Qty': transfer_qty,
-                            'Transfer Type': out_row['Transfer Out Type'],
-                            'Receive Type': in_row['Receive In Type']
-                        })
+                        key = (article, om)
+                        demand_limit = total_demand_map.get(key, 0)
+                        current_transferred = total_transferred_map.get(key, 0)
+
+                        if current_transferred >= demand_limit:
+                            continue
+
+                        remaining_allowed = demand_limit - current_transferred
+                        transfer_qty = min(out_row['Transfer Out Qty'], in_row['Receive In Qty'], remaining_allowed)
                         
-                        # Update quantities
-                        out_row['Transfer Out Qty'] -= transfer_qty
-                        in_row['Receive In Qty'] -= transfer_qty
+                        if transfer_qty > 0:
+                            recommendations.append({
+                                'From Site': out_row['Site'],
+                                'To Site': in_row['Site'],
+                                'Article': article,
+                                'Article Description': out_row['Article Description'],
+                                'From OM': om,
+                                'Transfer Qty': transfer_qty,
+                                'Transfer Type': out_row['Transfer Out Type'],
+                                'Receive Type': in_row['Receive In Type']
+                            })
+                            
+                            total_transferred_map[key] = current_transferred + transfer_qty
+                            
+                            # Update quantities
+                            out_row['Transfer Out Qty'] -= transfer_qty
+                            in_row['Receive In Qty'] -= transfer_qty
 
     if not recommendations:
         return pd.DataFrame()
