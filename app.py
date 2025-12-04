@@ -188,13 +188,13 @@ def calculate_aggressive_transfers(df):
     nd_transfers['Transfer Type'] = 'ND轉出'
 
     # Priority 2: RF type aggressive transfer
-    rf_transfers = df[(df['RP Type'] == 'RF') & ((df['SaSa Net Stock'] + df['Pending Received']) > (df['MOQ'] + 1))].copy()
+    rf_transfers = df[(df['RP Type'] == 'RF') & ((df['SaSa Net Stock'] + df['Pending Received']) > (df['MOQ']))].copy()
     if not rf_transfers.empty:
         rf_transfers['Max Sale'] = rf_transfers.groupby('Article')['Effective Sale'].transform('max')
         rf_transfers = rf_transfers[rf_transfers['Effective Sale'] < rf_transfers['Max Sale']]
 
-        rf_transfers['Base Transferable'] = (rf_transfers['SaSa Net Stock'] + rf_transfers['Pending Received']) - (rf_transfers['MOQ'] + 1)
-        rf_transfers['Cap Control'] = (rf_transfers['SaSa Net Stock'] + rf_transfers['Pending Received']) * 0.8
+        rf_transfers['Base Transferable'] = (rf_transfers['SaSa Net Stock'] + rf_transfers['Pending Received']) - (rf_transfers['MOQ'])
+        rf_transfers['Cap Control'] = (rf_transfers['SaSa Net Stock'] + rf_transfers['Pending Received']) * 0.9
         rf_transfers['Transfer Qty'] = np.minimum(rf_transfers['Base Transferable'], rf_transfers['Cap Control']).astype(int)
         rf_transfers['Transfer Qty'] = np.minimum(rf_transfers['Transfer Qty'], rf_transfers['SaSa Net Stock'])
         rf_transfers['Transfer Type'] = 'RF加強轉出'
@@ -269,15 +269,7 @@ def calculate_aggressive_transfers(df):
 
 
 def calculate_super_aggressive_transfers(df):
-    """Calculates super aggressive transfer recommendations based on defined business rules."""
-    df['Effective Sales'] = np.where(df['Last Month Sold Qty'] > 0, df['Last Month Sold Qty'], df['MTD Sold Qty'])
-    df['Stock+Pending'] = df['SaSa Net Stock'] + df['Pending Received']
-
-    # Get max sales per article
-    max_sales = df.groupby('Article')['Effective Sales'].max().to_dict()
-    df['Max Sales'] = df['Article'].map(max_sales)
-
-    # --- Identify Transfer-Out Candidates ---
+    df['Effective Sale'] = np.where(df['Last Month Sold Qty'] > 0, df['Last Month Sold Qty'], df['MTD Sold Qty'])
     transfer_out_list = []
 
     # Priority 1: ND Full Transfer
@@ -287,23 +279,14 @@ def calculate_super_aggressive_transfers(df):
     nd_transfers['Priority'] = 1
     transfer_out_list.append(nd_transfers)
 
-    # Priority 2: RF Super Aggressive Transfer
-    rf_super_aggressive = df[
-        (df['RP Type'] == 'RF') &
-        (df['Stock+Pending'] > 0) &
-        (df['Effective Sales'] < df['Max Sales'])
-    ].copy()
+    # Priority 2: RF Super Enhanced Transfer (ignore MOQ/Safety, allow up to 100%)
+    rf_super_aggressive = df[(df['RP Type'] == 'RF') & (df['SaSa Net Stock'] > 0)].copy()
 
     if not rf_super_aggressive.empty:
-        rf_super_aggressive = rf_super_aggressive.sort_values(by=['Article', 'Effective Sales'], ascending=[True, True])
+        rf_super_aggressive = rf_super_aggressive.sort_values(by=['Article', 'Effective Sale'], ascending=[True, True])
         
         # Calculations
-        base_transferable = rf_super_aggressive['SaSa Net Stock'] - 2
-        upper_limit = rf_super_aggressive['Stock+Pending'] * 0.9
-        
-        rf_super_aggressive['Transfer Out Qty'] = np.minimum(base_transferable, upper_limit).astype(int)
-        rf_super_aggressive['Transfer Out Qty'] = np.minimum(rf_super_aggressive['Transfer Out Qty'], rf_super_aggressive['SaSa Net Stock'])
-        rf_super_aggressive['Transfer Out Qty'] = rf_super_aggressive['Transfer Out Qty'].clip(lower=0)
+        rf_super_aggressive['Transfer Out Qty'] = rf_super_aggressive['SaSa Net Stock'].astype(int)
 
         rf_super_aggressive = rf_super_aggressive[rf_super_aggressive['Transfer Out Qty'] > 0]
         rf_super_aggressive['Transfer Out Type'] = 'RF特強轉出'
