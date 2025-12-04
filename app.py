@@ -436,10 +436,10 @@ def display_statistics(recs, original_df):
     }
 
 def create_visualizations(recs, original_df, strategy):
-    st.header("6. 資料視覺化")
+    st.header("6. Data Visualization")
 
     if recs.empty:
-        st.info("沒有資料可供視覺化。")
+        st.info("No data available for visualization.")
         return
 
     # Group data by OM for plotting
@@ -466,18 +466,18 @@ def create_visualizations(recs, original_df, strategy):
     elif strategy == '加強轉貨 (Aggressive)':
         ax.bar(x - 1.5*width, om_agg['ND_Transfer_Qty'], width, label='ND Transfer')
         ax.bar(x - 0.5*width, om_agg['RF_Surplus_Qty'], width, label='RF Surplus')
-        ax.bar(x + 0.5*width, om_agg['RF_Aggressive_Qty'], width, label='RF 加強')
+        ax.bar(x + 0.5*width, om_agg['RF_Aggressive_Qty'], width, label='RF Aggressive')
         ax.bar(x + 1.5*width, om_agg['Demand_Qty'], width, label='Demand')
         ax.bar(x + 2.5*width, om_agg['Actual_Receive_Qty'], width, label='Actual Received')
     elif strategy == '超級增強轉貨 (Super Enhanced)':
         ax.bar(x - 1.5*width, om_agg['ND_Transfer_Qty'], width, label='ND Transfer')
         ax.bar(x - 0.5*width, om_agg['RF_Surplus_Qty'], width, label='RF Surplus')
-        ax.bar(x + 0.5*width, om_agg['RF_Super_Aggressive_Qty'], width, label='RF 特強')
+        ax.bar(x + 0.5*width, om_agg['RF_Super_Aggressive_Qty'], width, label='RF Super Enhanced')
         ax.bar(x + 1.5*width, om_agg['Demand_Qty'], width, label='Demand')
         ax.bar(x + 2.5*width, om_agg['Actual_Receive_Qty'], width, label='Actual Received')
 
-    ax.set_ylabel('調貨件數')
-    ax.set_title('轉出與接收分析')
+    ax.set_ylabel('Transfer Quantity')
+    ax.set_title('Transfer & Receive Analysis')
     ax.set_xticks(x)
     ax.set_xticklabels(oms, rotation=45, ha="right")
     ax.legend()
