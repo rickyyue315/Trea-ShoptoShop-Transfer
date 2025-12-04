@@ -8,7 +8,7 @@ import seaborn as sns
 from io import BytesIO
 from datetime import datetime
 
-st.set_page_config(layout="wide", page_title="強制指定店鋪轉貨系統", page_icon="📦")
+st.set_page_config(layout="wide", page_title="強制指定店舖轉貨系統", page_icon="📦")
 
 
 def preprocess_data(df):
@@ -110,7 +110,7 @@ def calculate_conservative_transfers(df):
     # Identify receive candidates
     receive_candidates = df[df['Target'] > 0].copy()
     receive_candidates['Receive Qty'] = receive_candidates['Target']
-    receive_candidates['Receive Type'] = '指定店鋪補貨'
+    receive_candidates['Receive Type'] = '指定店舖補貨'
     receive_candidates = receive_candidates.sort_values(by=['Article', 'Target'], ascending=[True, False])
 
     # Matching logic
@@ -205,7 +205,7 @@ def calculate_aggressive_transfers(df):
     # Identify receive candidates
     receive_candidates = df[df['Target'] > 0].copy()
     receive_candidates['Receive Qty'] = receive_candidates['Target']
-    receive_candidates['Receive Type'] = '指定店鋪補貨'
+    receive_candidates['Receive Type'] = '指定店舖補貨'
     receive_candidates = receive_candidates.sort_values(by=['Article', 'Target'], ascending=[True, False])
 
     # Matching logic (same as conservative)
@@ -301,7 +301,7 @@ def calculate_super_aggressive_transfers(df):
     # --- Identify Receive Candidates ---
     receive_in = df[df['Target'] > 0].copy()
     receive_in['Receive In Qty'] = receive_in['Target']
-    receive_in['Receive In Type'] = '指定店鋪補貨'
+    receive_in['Receive In Type'] = '指定店舖補貨'
     receive_in = receive_in.sort_values(by=['Article', 'Target'], ascending=[True, False])
 
     # --- Matching Logic ---
@@ -367,7 +367,7 @@ def display_statistics(recs, original_df):
     unique_oms = recs['From OM'].nunique()
 
     kpi_data = {
-        "指標": ["總調貨建議數量", "總調貨件數", "涉及SKU數量", "涉及OM數量"],
+        "指標": ["總調貨建議行數", "總調貨件數", "涉及SKU數量", "涉及OM數量"],
         "數值": [total_recs, total_qty, unique_articles, unique_oms]
     }
     kpi_df = pd.DataFrame(kpi_data)
@@ -411,7 +411,7 @@ def display_statistics(recs, original_df):
             Lines=('Transfer Type', 'count')
         ).reset_index()
         st.dataframe(transfer_type_summary)
-    elif strategy == '特強轉貨 (Super Aggressive)':
+    elif strategy == '超級增強轉貨 (Super Enhanced)':
         transfer_type_summary = recs.groupby('Transfer Type').agg(
             Total_Qty=('Transfer Qty', 'sum'),
             Lines=('Transfer Type', 'count')
@@ -436,10 +436,10 @@ def display_statistics(recs, original_df):
     }
 
 def create_visualizations(recs, original_df, strategy):
-    st.header("6. 數據視覺化")
+    st.header("6. 資料視覺化")
 
     if recs.empty:
-        st.info("沒有數據可供視覺化。")
+        st.info("沒有資料可供視覺化。")
         return
 
     # Group data by OM for plotting
@@ -466,18 +466,18 @@ def create_visualizations(recs, original_df, strategy):
     elif strategy == '加強轉貨 (Aggressive)':
         ax.bar(x - 1.5*width, om_agg['ND_Transfer_Qty'], width, label='ND Transfer')
         ax.bar(x - 0.5*width, om_agg['RF_Surplus_Qty'], width, label='RF Surplus')
-        ax.bar(x + 0.5*width, om_agg['RF_Aggressive_Qty'], width, label='RF Aggressive')
+        ax.bar(x + 0.5*width, om_agg['RF_Aggressive_Qty'], width, label='RF 加強')
         ax.bar(x + 1.5*width, om_agg['Demand_Qty'], width, label='Demand')
         ax.bar(x + 2.5*width, om_agg['Actual_Receive_Qty'], width, label='Actual Received')
-    elif strategy == '特強轉貨 (Super Aggressive)':
+    elif strategy == '超級增強轉貨 (Super Enhanced)':
         ax.bar(x - 1.5*width, om_agg['ND_Transfer_Qty'], width, label='ND Transfer')
         ax.bar(x - 0.5*width, om_agg['RF_Surplus_Qty'], width, label='RF Surplus')
-        ax.bar(x + 0.5*width, om_agg['RF_Super_Aggressive_Qty'], width, label='RF Super Aggressive')
+        ax.bar(x + 0.5*width, om_agg['RF_Super_Aggressive_Qty'], width, label='RF 特強')
         ax.bar(x + 1.5*width, om_agg['Demand_Qty'], width, label='Demand')
         ax.bar(x + 2.5*width, om_agg['Actual_Receive_Qty'], width, label='Actual Received')
 
-    ax.set_ylabel('Transfer Quantity')
-    ax.set_title('Transfer Receive Analysis')
+    ax.set_ylabel('調貨件數')
+    ax.set_title('轉出與接收分析')
     ax.set_xticks(x)
     ax.set_xticklabels(oms, rotation=45, ha="right")
     ax.legend()
@@ -485,7 +485,7 @@ def create_visualizations(recs, original_df, strategy):
     st.pyplot(fig)
 
 def export_to_excel(recs, stats, original_df):
-    st.header("6. 匯出功能")
+    st.header("7. 匯出功能")
     if recs.empty:
         st.info("沒有建議可供匯出。")
         return
@@ -533,7 +533,7 @@ def export_to_excel(recs, stats, original_df):
 
     filename = f"Transfer_Suggestions_{datetime.now().strftime('%Y%m%d')}.xlsx"
     st.download_button(
-        label="📥 Download Excel Report",
+        label="📥 下載 Excel 報表",
         data=excel_buffer.getvalue(),
         file_name=filename,
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -541,7 +541,7 @@ def export_to_excel(recs, stats, original_df):
 
 
 def main():
-    st.title("📦 強制指定店鋪轉貨系統")
+    st.title("📦 強制指定店舖轉貨系統")
     st.sidebar.header("系統資訊")
     st.sidebar.info("""
     **版本：v1.0**
@@ -558,74 +558,74 @@ def main():
     uploaded_file = st.file_uploader(
         "請上傳Excel檔",
         type=['xlsx', 'xls'],
-        help="請確保文件包含 'Article', 'Article Description', 'RP Type', 'Site', 'OM', 'MOQ', 'SaSa Net Stock', 'Target', 'Pending Received', 'Safety Stock', 'Last Month Sold Qty', 'MTD Sold Qty' 等欄位。"
+        help="請確保檔案包含 'Article', 'Article Description', 'RP Type', 'Site', 'OM', 'MOQ', 'SaSa Net Stock', 'Target', 'Pending Received', 'Safety Stock', 'Last Month Sold Qty', 'MTD Sold Qty' 等欄位。"
     )
 
     if uploaded_file:
         try:
             progress_bar = st.progress(0)
-            with st.spinner('正在讀取和處理文件...'):
-                progress_bar.progress(25, text="正在讀取Excel文件...")
+            with st.spinner('正在讀取與處理檔案...'):
+                progress_bar.progress(25, text="正在讀取 Excel 檔案...")
                 df = pd.read_excel(uploaded_file)
-                progress_bar.progress(50, text="文件讀取完畢，正在進行數據預處理...")
+                progress_bar.progress(50, text="檔案讀取完成，正在進行資料預處理...")
 
                 if df.empty:
-                    st.error("錯誤：上傳的文件為空，請檢查文件內容。")
+                    st.error("錯誤：上傳的檔案為空，請檢查檔案內容。")
                     return
 
                 processed_df, notes = preprocess_data(df)
-                progress_bar.progress(100, text="數據預處理完成！")
+                progress_bar.progress(100, text="資料預處理完成！")
 
                 if processed_df is not None:
                     st.session_state.df = processed_df
-                    st.success("文件上傳和預處理成功！")
+                    st.success("檔案上傳與預處理成功！")
 
                     st.header("2. 資料預覽")
                     st.metric("總記錄數", f"{len(processed_df):,}")
                     st.dataframe(processed_df.head())
 
-                    with st.expander("查看數據清理日誌"):
+                    with st.expander("查看資料清理紀錄"):
                         for note in notes:
                             st.info(note)
 
                     st.header("3. 分析選項")
                     transfer_strategy = st.radio(
                         "請選擇調貨模式：",
-                        ('保守轉貨 (Conservative)', '加強轉貨 (Aggressive)', '特強轉貨 (Super Aggressive)'),
-                        help="保守模式優先處理ND和過剩庫存；加強模式會更積極地從低銷量店鋪調貨；特強模式最為積極。"
+                        ('保守轉貨 (Conservative)', '加強轉貨 (Aggressive)', '超級增強轉貨 (Super Enhanced)'),
+                        help="保守模式優先處理 ND 與過剩庫存；加強模式更積極地由低銷量店舖轉出；超級增強模式最為積極。"
                     )
 
                     if st.button("🚀 開始分析"):
                         st.session_state.transfer_strategy = transfer_strategy
                         
-                        with st.spinner('正在生成調貨建議...'):
+                        with st.spinner('正在產生調貨建議...'):
                             if 'df' in st.session_state:
                                 recommendations = None
                                 if transfer_strategy == '保守轉貨 (Conservative)':
                                     recommendations = calculate_conservative_transfers(st.session_state.df)
                                 elif transfer_strategy == '加強轉貨 (Aggressive)':
                                     recommendations = calculate_aggressive_transfers(st.session_state.df)
-                                elif transfer_strategy == '特強轉貨 (Super Aggressive)':
+                                elif transfer_strategy == '超級增強轉貨 (Super Enhanced)':
                                     recommendations = calculate_super_aggressive_transfers(st.session_state.df)
                                 
                                 if recommendations is not None:
                                     if not recommendations.empty:
                                         st.header("4. 結果展示")
-                                        st.success(f"成功生成 {len(recommendations)} 條調貨建議！")
+                                        st.success(f"成功產生 {len(recommendations)} 筆調貨建議！")
                                         st.dataframe(recommendations)
                                         
-                                        with st.spinner('正在生成統計數據和圖表...'):
+                                        with st.spinner('正在產生統計與圖表...'):
                                             display_statistics(recommendations, st.session_state.df)
                                             create_visualizations(recommendations, st.session_state.df, st.session_state.transfer_strategy)
                                             export_to_excel(recommendations, st.session_state.get('stats', {}), df)
                                     else:
-                                        st.info("根據所選策略，未生成任何轉貨建議。")
+                                        st.info("依所選模式，未產生任何調貨建議。")
                                 else:
-                                    st.error("請先上傳文件。")
+                                    st.error("請先上傳檔案。")
 
         except Exception as e:
-            st.error(f"處理文件時發生錯誤: {e}")
-            st.info("請檢查文件格式是否正確，或欄位是否符合要求。可能是記憶體不足或文件已損壞。")
+            st.error(f"處理檔案時發生錯誤: {e}")
+            st.info("請檢查檔案格式是否正確，或欄位是否符合要求。可能為記憶體不足或檔案已損壞。")
 
 
 if __name__ == "__main__":
