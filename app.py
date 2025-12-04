@@ -491,16 +491,18 @@ def export_to_excel(recs, stats, original_df):
         return
 
     # Prepare original data for merging
-    from_site_df = original_df[['Site', 'Article', 'SaSa Net Stock', 'Safety Stock', 'MOQ']].rename(columns={
+    from_site_df = original_df[['Site', 'Article', 'SaSa Net Stock', 'Safety Stock', 'MOQ', 'RP Type']].rename(columns={
         'Site': 'From Site',
         'SaSa Net Stock': 'Transfer Site Original Stock',
         'Safety Stock': 'Transfer Site Safety Stock',
-        'MOQ': 'Transfer Site MOQ'
+        'MOQ': 'Transfer Site MOQ',
+        'RP Type': 'Transfer Site RP Type'
     })
 
-    to_site_df = original_df[['Site', 'Article', 'Target']].rename(columns={
+    to_site_df = original_df[['Site', 'Article', 'Target', 'RP Type']].rename(columns={
         'Site': 'To Site',
-        'Target': 'Receive Site Target Qty'
+        'Target': 'Receive Site Target Qty',
+        'RP Type': 'Receive Site RP Type'
     })
 
     # Merge with recommendations
@@ -516,6 +518,7 @@ def export_to_excel(recs, stats, original_df):
     export_df_final['Product Desc'] = export_df['Article'].astype(str) + " " + export_df['Article Description']
     export_df_final['OM'] = export_df['From OM']
     export_df_final['Transfer Site'] = export_df['From Site']
+    export_df_final['Transfer Site RP Type'] = export_df['Transfer Site RP Type']
     export_df_final['Transfer Qty'] = export_df['Transfer Qty']
     
     # Populate with actual data
@@ -524,6 +527,7 @@ def export_to_excel(recs, stats, original_df):
     export_df_final['Transfer Site Safety Stock'] = export_df['Transfer Site Safety Stock']
     export_df_final['Transfer Site MOQ'] = export_df['Transfer Site MOQ']
     export_df_final['Receive Site'] = export_df['To Site']
+    export_df_final['Receive Site RP Type'] = export_df['Receive Site RP Type']
     export_df_final['Receive Site Target Qty'] = export_df['Receive Site Target Qty']
     export_df_final['Notes'] = ''
 
